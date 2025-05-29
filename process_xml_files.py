@@ -8,6 +8,12 @@ from download_xml_files import create_session, download_file, normalize_filename
 import zipfile
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from threading import Lock
+
+# Глобальный словарь для отслеживания скачиваемых файлов
+downloading_files = {}
+downloading_lock = Lock()
 
 def get_current_year_month():
     """Возвращает текущий год и месяц"""
@@ -178,6 +184,59 @@ def get_file_size(url, session):
         print(f"Ошибка при получении размера файла {url}: {str(e)}")
     return 0
 
+def is_file_downloading(url):
+    """Проверяет, скачивается ли файл в данный момент"""
+    with downloading_lock:
+        return url in downloading_files
+
+def mark_file_downloading(url, is_downloading=True):
+    """Отмечает файл как скачиваемый или освобождает его"""
+    with downloading_lock:
+        if is_downloading:
+            downloading_files[url] = True
+        else:
+            downloading_files.pop(url, None)
+
+def download_with_rate_limit(url, target_path, session, chunk_size=8192, rate_limit=1024*1024):
+    """Скачивает файл с ограничением скорости"""
+    try:
+        # Проверяем, не скачивается ли уже этот файл
+        if is_file_downloading(url):
+            print(f"Файл {os.path.basename(url)} уже скачивается в другом потоке")
+            return False
+
+        # Отмечаем файл как скачиваемый
+        mark_file_downloading(url, True)
+
+        response = session.get(url, stream=True)
+        response.raise_for_status()
+        
+        total_size = int(response.headers.get('content-length', 0))
+        downloaded = 0
+        start_time = time.time()
+        
+        with open(target_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=chunk_size):
+                if chunk:
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    
+                    # Ограничение скорости
+                    elapsed = time.time() - start_time
+                    expected_time = downloaded / rate_limit
+                    if elapsed < expected_time:
+                        time.sleep(expected_time - elapsed)
+        
+        return True
+    except Exception as e:
+        print(f"Ошибка при скачивании {url}: {str(e)}")
+        if os.path.exists(target_path):
+            os.remove(target_path)
+        return False
+    finally:
+        # Освобождаем файл
+        mark_file_downloading(url, False)
+
 def download_and_check_file(file_info):
     """Функция для скачивания и проверки одного файла"""
     url, target_path, session = file_info
@@ -187,8 +246,8 @@ def download_and_check_file(file_info):
     if os.path.exists(target_path) and check_file_integrity(target_path):
         return f"Пропущен файл (уже скачан и цел): {basename}", True
     
-    # Скачиваем файл
-    result = download_file(url, target_path, session, verbose=False)
+    # Скачиваем файл с ограничением скорости
+    result = download_with_rate_limit(url, target_path, session)
     if result:
         return f"✓ Файл успешно скачан: {basename}", True
     else:
@@ -196,7 +255,9 @@ def download_and_check_file(file_info):
 
 def process_xml_files(base_dir="."):
     """Обрабатывает XML файлы и скачивает связанные файлы"""
+    # Создаем сессию с увеличенным таймаутом
     session = create_session()
+    session.timeout = 300  # 5 минут таймаут
     
     # Создаем базовые директории для данных
     data_base_dir = os.path.join(base_dir, "data")
@@ -214,18 +275,26 @@ def process_xml_files(base_dir="."):
     
     # Подсчитываем общее количество файлов для скачивания
     total_files_to_download = 0
+    unique_files = set()  # Множество для отслеживания уникальных файлов
+    
     for xml_file in latest_files:
         try:
             tree = ET.parse(xml_file)
             root = tree.getroot()
             zip_links, xsd_links = extract_links_from_xml(root)
-            total_files_to_download += len(zip_links) + len(xsd_links)
+            
+            # Добавляем только уникальные файлы
+            for link in zip_links + xsd_links:
+                if link not in unique_files:
+                    unique_files.add(link)
+                    total_files_to_download += 1
+            
             print(f"В файле {xml_file} найдено {len(zip_links)} ZIP и {len(xsd_links)} XSD файлов")
         except Exception as e:
             print(f"Ошибка при подсчете файлов в {xml_file}: {str(e)}")
             continue
     
-    print(f"\nВсего файлов для скачивания: {total_files_to_download}")
+    print(f"\nВсего уникальных файлов для скачивания: {total_files_to_download}")
     
     # Создаем общий прогресс-бар
     with tqdm(total=total_files_to_download, desc="Общий прогресс", position=0) as pbar:
