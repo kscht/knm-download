@@ -197,7 +197,7 @@ def mark_file_downloading(url, is_downloading=True):
         else:
             downloading_files.pop(url, None)
 
-def download_with_rate_limit(url, target_path, session, chunk_size=8192, rate_limit=1024*1024):
+def download_with_rate_limit(url, target_path, session, chunk_size=8192, rate_limit=10*1024*1024):  # 10MB/s
     """Скачивает файл с ограничением скорости"""
     try:
         # Проверяем, не скачивается ли уже этот файл
