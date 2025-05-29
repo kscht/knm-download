@@ -60,11 +60,11 @@ def get_target_directory(filename, source_dir):
     print(f"Исходная директория: {source_dir}")
     print(f"Поддиректория: {subdir}")
     
-    # Ищем год и месяц в имени файла (формат: data-20230902-structure-20220125.zip)
-    year_match = re.search(r'data-(\d{4})(\d{2})', filename)
+    # Ищем год и месяц в имени файла (формат: 7710146102-inspection-2021-7.xml)
+    year_match = re.search(r'inspection-(\d{4})-(\d{1,2})', filename)
     if year_match:
         year = year_match.group(1)
-        month = year_match.group(2)
+        month = year_match.group(2).zfill(2)  # Добавляем ведущий ноль для месяцев < 10
         target_dir = os.path.join(subdir, f"{year}-{month}")
         print(f"Найден год и месяц: {year}-{month}")
         print(f"Целевая директория: {target_dir}")
