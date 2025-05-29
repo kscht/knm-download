@@ -60,21 +60,8 @@ def get_target_directory(filename, source_dir):
     print(f"Исходная директория: {source_dir}")
     print(f"Поддиректория: {subdir}")
     
-    # Для plan файлов используем только год
-    if 'plan' in filename.lower():
-        year_match = re.search(r'plan-(\d{4})', filename)
-        if year_match:
-            year = year_match.group(1)
-            target_dir = os.path.join(subdir, year)
-            print(f"Найден plan файл, год: {year}")
-            print(f"Целевая директория: {target_dir}")
-            return target_dir
-        else:
-            print(f"Не удалось извлечь год из имени plan файла: {filename}")
-            return None
-    
-    # Ищем год и месяц в имени файла
-    year_match = re.search(r'(\d{4})-(\d{1,2})', filename)
+    # Ищем год и месяц в имени файла (формат: data-20230902-structure-20220125.zip)
+    year_match = re.search(r'data-(\d{4})(\d{2})', filename)
     if year_match:
         year = year_match.group(1)
         month = year_match.group(2)
