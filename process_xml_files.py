@@ -239,11 +239,11 @@ def download_with_rate_limit(url, target_path, session, chunk_size=8192, rate_li
 
 def download_and_check_file(file_info):
     """Функция для скачивания и проверки одного файла"""
-    url, target_path, session = file_info
+    url, target_path, session, force_update = file_info
     basename = os.path.basename(url)
     
-    # Проверяем существование и целостность файла
-    if os.path.exists(target_path) and check_file_integrity(target_path):
+    # Проверяем существование и целостность файла, если не требуется принудительное обновление
+    if not force_update and os.path.exists(target_path) and check_file_integrity(target_path):
         return f"Пропущен файл (уже скачан и цел): {basename}", True
     
     # Скачиваем файл с ограничением скорости
@@ -253,8 +253,13 @@ def download_and_check_file(file_info):
     else:
         return f"✗ Ошибка при скачивании файла: {basename}", False
 
-def process_xml_files(base_dir="."):
-    """Обрабатывает XML файлы и скачивает связанные файлы"""
+def process_xml_files(base_dir=".", force_update=False):
+    """Обрабатывает XML файлы и скачивает связанные файлы
+    
+    Args:
+        base_dir (str): Базовая директория для скачивания файлов
+        force_update (bool): Если True, то файлы будут перескачаны даже если они уже существуют
+    """
     # Создаем сессию с увеличенным таймаутом
     session = create_session()
     session.timeout = 300  # 5 минут таймаут
@@ -264,6 +269,8 @@ def process_xml_files(base_dir="."):
     xsd_base_dir = os.path.join(base_dir, "xsd")
     
     print("\nНачинаем новую сессию скачивания")
+    if force_update:
+        print("Режим принудительного обновления: все файлы будут перескачаны")
     
     # Находим XML файлы
     latest_files = find_latest_xml_files(base_dir)
@@ -273,100 +280,67 @@ def process_xml_files(base_dir="."):
     
     print(f"\nНайдено {len(latest_files)} XML файлов для обработки")
     
-    # Подсчитываем общее количество файлов для скачивания
-    total_files_to_download = 0
-    unique_files = set()  # Множество для отслеживания уникальных файлов
+    # Словарь для хранения уникальных файлов и их путей
+    unique_files = {}  # {url: (target_path, session, force_update)}
     
+    # Собираем все уникальные файлы из XML
     for xml_file in latest_files:
         try:
             tree = ET.parse(xml_file)
             root = tree.getroot()
             zip_links, xsd_links = extract_links_from_xml(root)
             
-            # Добавляем только уникальные файлы
-            for link in zip_links + xsd_links:
-                if link not in unique_files:
-                    unique_files.add(link)
-                    total_files_to_download += 1
+            # Определяем целевую директорию
+            xml_basename = os.path.basename(xml_file)
+            target_dir = get_target_directory(xml_basename, xml_file)
+            if not target_dir:
+                print(f"\nПропущен файл {xml_basename}: не удалось определить целевую директорию")
+                continue
+            
+            # Создаем полный путь к целевой директории
+            full_target_dir = os.path.join(data_base_dir, target_dir)
+            os.makedirs(full_target_dir, exist_ok=True)
+            os.makedirs(xsd_base_dir, exist_ok=True)
+            
+            # Добавляем ZIP файлы
+            for zip_link in zip_links:
+                if zip_link not in unique_files:
+                    zip_basename = os.path.basename(zip_link)
+                    zip_filename = os.path.join(full_target_dir, zip_basename)
+                    unique_files[zip_link] = (zip_filename, session, force_update)
+            
+            # Добавляем XSD файлы
+            for xsd_link in xsd_links:
+                if xsd_link not in unique_files:
+                    xsd_basename = os.path.basename(xsd_link)
+                    xsd_filename = os.path.join(xsd_base_dir, xsd_basename)
+                    unique_files[xsd_link] = (xsd_filename, session, force_update)
             
             print(f"В файле {xml_file} найдено {len(zip_links)} ZIP и {len(xsd_links)} XSD файлов")
         except Exception as e:
             print(f"Ошибка при подсчете файлов в {xml_file}: {str(e)}")
             continue
     
-    print(f"\nВсего уникальных файлов для скачивания: {total_files_to_download}")
+    total_files = len(unique_files)
+    print(f"\nВсего уникальных файлов для скачивания: {total_files}")
+    
+    if total_files == 0:
+        print("Нет файлов для скачивания")
+        return
     
     # Создаем общий прогресс-бар
-    with tqdm(total=total_files_to_download, desc="Общий прогресс", position=0) as pbar:
-        # Обрабатываем каждый XML файл
-        for xml_file in tqdm(latest_files, desc="Обработка XML файлов", position=1, leave=False):
-            try:
-                xml_basename = os.path.basename(xml_file)
-                print(f"\nОбработка файла: {xml_basename}")
-                print(f"Полный путь: {xml_file}")
-                
-                # Парсим XML файл
-                tree = ET.parse(xml_file)
-                root = tree.getroot()
-                
-                # Извлекаем ссылки
-                zip_links, xsd_links = extract_links_from_xml(root)
-                
-                if not zip_links and not xsd_links:
-                    print(f"В файле {xml_basename} не найдено ссылок на файлы")
-                    continue
-                    
-                print(f"Найдено {len(zip_links)} ZIP файлов и {len(xsd_links)} XSD файлов")
-                
-                # Определяем целевую директорию
-                target_dir = get_target_directory(xml_basename, xml_file)
-                if not target_dir:
-                    print(f"\nПропущен файл {xml_basename}: не удалось определить целевую директорию")
-                    continue
-                
-                print(f"Целевая директория: {target_dir}")
-                
-                # Создаем полный путь к целевой директории
-                full_target_dir = os.path.join(data_base_dir, target_dir)
-                print(f"Создаем директорию: {full_target_dir}")
-                os.makedirs(full_target_dir, exist_ok=True)
-                os.makedirs(xsd_base_dir, exist_ok=True)
-                
-                # Подготавливаем список файлов для скачивания
-                files_to_download = []
-                
-                # Добавляем ZIP файлы
-                for zip_link in zip_links:
-                    zip_basename = os.path.basename(zip_link)
-                    zip_filename = os.path.join(full_target_dir, zip_basename)
-                    files_to_download.append((zip_link, zip_filename, session))
-                
-                # Добавляем XSD файлы
-                for xsd_link in xsd_links:
-                    xsd_basename = os.path.basename(xsd_link)
-                    xsd_filename = os.path.join(xsd_base_dir, xsd_basename)
-                    files_to_download.append((xsd_link, xsd_filename, session))
-                
-                # Скачиваем файлы в параллельном режиме
-                with ThreadPoolExecutor(max_workers=5) as executor:
-                    future_to_file = {
-                        executor.submit(download_and_check_file, file_info): file_info 
-                        for file_info in files_to_download
-                    }
-                    
-                    for future in as_completed(future_to_file):
-                        message, success = future.result()
-                        print(f"\n{message}")
-                        pbar.update(1)
-                
-            except ET.ParseError as e:
-                print(f"\n✗ Ошибка при парсинге XML файла {xml_file}: {str(e)}")
-                continue
-            except Exception as e:
-                print(f"\n✗ Неожиданная ошибка при обработке {xml_file}: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                continue
+    with tqdm(total=total_files, desc="Общий прогресс", position=0) as pbar:
+        # Скачиваем файлы в параллельном режиме
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            future_to_file = {
+                executor.submit(download_and_check_file, (url, *file_info)): url 
+                for url, file_info in unique_files.items()
+            }
+            
+            for future in as_completed(future_to_file):
+                message, success = future.result()
+                print(f"\n{message}")
+                pbar.update(1)
 
 if __name__ == "__main__":
-    process_xml_files() 
+    process_xml_files(force_update=True)  # По умолчанию включаем принудительное обновление 
