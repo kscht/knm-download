@@ -7,6 +7,7 @@ import json
 from download_xml_files import create_session, download_file, normalize_filename
 import zipfile
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 def get_current_year_month():
     """Возвращает текущий год и месяц"""
@@ -177,6 +178,22 @@ def get_file_size(url, session):
         print(f"Ошибка при получении размера файла {url}: {str(e)}")
     return 0
 
+def download_and_check_file(file_info):
+    """Функция для скачивания и проверки одного файла"""
+    url, target_path, session = file_info
+    basename = os.path.basename(url)
+    
+    # Проверяем существование и целостность файла
+    if os.path.exists(target_path) and check_file_integrity(target_path):
+        return f"Пропущен файл (уже скачан и цел): {basename}", True
+    
+    # Скачиваем файл
+    result = download_file(url, target_path, session, verbose=False)
+    if result:
+        return f"✓ Файл успешно скачан: {basename}", True
+    else:
+        return f"✗ Ошибка при скачивании файла: {basename}", False
+
 def process_xml_files(base_dir="."):
     """Обрабатывает XML файлы и скачивает связанные файлы"""
     session = create_session()
@@ -194,9 +211,6 @@ def process_xml_files(base_dir="."):
         return
     
     print(f"\nНайдено {len(latest_files)} XML файлов для обработки")
-    
-    # Удаляем множество processed_files, чтобы обработать все файлы заново
-    # processed_files = set()  # Закомментируйте эту строку
     
     # Подсчитываем общее количество файлов для скачивания
     total_files_to_download = 0
@@ -219,12 +233,6 @@ def process_xml_files(base_dir="."):
         for xml_file in tqdm(latest_files, desc="Обработка XML файлов", position=1, leave=False):
             try:
                 xml_basename = os.path.basename(xml_file)
-                
-                # Пропускаем уже обработанные файлы в текущей сессии
-                # if xml_basename in processed_files:
-                #     print(f"\nПропущен уже обработанный файл: {xml_basename}")
-                #     continue
-                    
                 print(f"\nОбработка файла: {xml_basename}")
                 print(f"Полный путь: {xml_file}")
                 
@@ -237,16 +245,14 @@ def process_xml_files(base_dir="."):
                 
                 if not zip_links and not xsd_links:
                     print(f"В файле {xml_basename} не найдено ссылок на файлы")
-                    # processed_files.add(xml_basename)
                     continue
                     
                 print(f"Найдено {len(zip_links)} ZIP файлов и {len(xsd_links)} XSD файлов")
                 
-                # Определяем целевую директорию на основе имени XML файла и исходной директории
+                # Определяем целевую директорию
                 target_dir = get_target_directory(xml_basename, xml_file)
                 if not target_dir:
                     print(f"\nПропущен файл {xml_basename}: не удалось определить целевую директорию")
-                    # processed_files.add(xml_basename)
                     continue
                 
                 print(f"Целевая директория: {target_dir}")
@@ -257,60 +263,40 @@ def process_xml_files(base_dir="."):
                 os.makedirs(full_target_dir, exist_ok=True)
                 os.makedirs(xsd_base_dir, exist_ok=True)
                 
-                # Скачиваем ZIP файлы
+                # Подготавливаем список файлов для скачивания
+                files_to_download = []
+                
+                # Добавляем ZIP файлы
                 for zip_link in zip_links:
                     zip_basename = os.path.basename(zip_link)
                     zip_filename = os.path.join(full_target_dir, zip_basename)
-                    
-                    # Проверяем существование и целостность файла
-                    if os.path.exists(zip_filename) and check_file_integrity(zip_filename):
-                        print(f"\nПропущен ZIP файл (уже скачан и цел): {zip_basename}")
-                        pbar.update(1)
-                        continue
-                    
-                    # Скачиваем файл
-                    print(f"\nСкачивание файла: {zip_basename}")
-                    print(f"URL: {zip_link}")
-                    result = download_file(zip_link, zip_filename, session, verbose=False)
-                    if result == True:
-                        print(f"✓ Файл успешно скачан: {zip_basename}")
-                    else:
-                        print(f"✗ Ошибка при скачивании файла: {zip_basename}")
-                    pbar.update(1)
+                    files_to_download.append((zip_link, zip_filename, session))
                 
-                # Скачиваем XSD файлы
+                # Добавляем XSD файлы
                 for xsd_link in xsd_links:
                     xsd_basename = os.path.basename(xsd_link)
                     xsd_filename = os.path.join(xsd_base_dir, xsd_basename)
-                    
-                    # Проверяем существование и целостность файла
-                    if os.path.exists(xsd_filename) and check_file_integrity(xsd_filename):
-                        print(f"\nПропущен XSD файл (уже скачан и цел): {xsd_basename}")
-                        pbar.update(1)
-                        continue
-                    
-                    # Скачиваем файл
-                    print(f"\nСкачивание файла: {xsd_basename}")
-                    print(f"URL: {xsd_link}")
-                    result = download_file(xsd_link, xsd_filename, session, verbose=False)
-                    if result == True:
-                        print(f"✓ Файл успешно скачан: {xsd_basename}")
-                    else:
-                        print(f"✗ Ошибка при скачивании файла: {xsd_basename}")
-                    pbar.update(1)
+                    files_to_download.append((xsd_link, xsd_filename, session))
                 
-                # Отмечаем XML файл как обработанный
-                # processed_files.add(xml_basename)
+                # Скачиваем файлы в параллельном режиме
+                with ThreadPoolExecutor(max_workers=5) as executor:
+                    future_to_file = {
+                        executor.submit(download_and_check_file, file_info): file_info 
+                        for file_info in files_to_download
+                    }
+                    
+                    for future in as_completed(future_to_file):
+                        message, success = future.result()
+                        print(f"\n{message}")
+                        pbar.update(1)
                 
             except ET.ParseError as e:
                 print(f"\n✗ Ошибка при парсинге XML файла {xml_file}: {str(e)}")
-                # processed_files.add(xml_basename)
                 continue
             except Exception as e:
                 print(f"\n✗ Неожиданная ошибка при обработке {xml_file}: {str(e)}")
                 import traceback
                 traceback.print_exc()
-                # processed_files.add(xml_basename)
                 continue
 
 if __name__ == "__main__":
