@@ -1,0 +1,47 @@
+# Игнорировать все файлы в директории xml
+xml/*
+# Не игнорировать list.xml
+!xml/248/list.xml
+!xml/no248/list.xml
+# Не игнорировать директории
+!xml/248/
+!xml/no248/
+
+# Игнорировать директории с данными
+data/
+xsd/
+
+# Игнорировать временные файлы
+*.tmp
+*.temp
+*.bak
+
+# Игнорировать файлы Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Игнорировать файлы IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+venv/ 
