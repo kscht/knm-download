@@ -187,16 +187,16 @@ def process_xml_files(base_dir="."):
     
     print("\nНачинаем новую сессию скачивания")
     
-    # Находим XML файлы с текущим годом и месяцем
+    # Находим XML файлы
     latest_files = find_latest_xml_files(base_dir)
     if not latest_files:
-        print("Не найдены XML файлы с текущим годом и месяцем")
+        print("Не найдены XML файлы")
         return
     
     print(f"\nНайдено {len(latest_files)} XML файлов для обработки")
     
-    # Множество для отслеживания уже обработанных файлов в текущей сессии
-    processed_files = set()
+    # Удаляем множество processed_files, чтобы обработать все файлы заново
+    # processed_files = set()  # Закомментируйте эту строку
     
     # Подсчитываем общее количество файлов для скачивания
     total_files_to_download = 0
@@ -221,9 +221,9 @@ def process_xml_files(base_dir="."):
                 xml_basename = os.path.basename(xml_file)
                 
                 # Пропускаем уже обработанные файлы в текущей сессии
-                if xml_basename in processed_files:
-                    print(f"\nПропущен уже обработанный файл: {xml_basename}")
-                    continue
+                # if xml_basename in processed_files:
+                #     print(f"\nПропущен уже обработанный файл: {xml_basename}")
+                #     continue
                     
                 print(f"\nОбработка файла: {xml_basename}")
                 print(f"Полный путь: {xml_file}")
@@ -237,7 +237,7 @@ def process_xml_files(base_dir="."):
                 
                 if not zip_links and not xsd_links:
                     print(f"В файле {xml_basename} не найдено ссылок на файлы")
-                    processed_files.add(xml_basename)
+                    # processed_files.add(xml_basename)
                     continue
                     
                 print(f"Найдено {len(zip_links)} ZIP файлов и {len(xsd_links)} XSD файлов")
@@ -246,7 +246,7 @@ def process_xml_files(base_dir="."):
                 target_dir = get_target_directory(xml_basename, xml_file)
                 if not target_dir:
                     print(f"\nПропущен файл {xml_basename}: не удалось определить целевую директорию")
-                    processed_files.add(xml_basename)
+                    # processed_files.add(xml_basename)
                     continue
                 
                 print(f"Целевая директория: {target_dir}")
@@ -300,17 +300,17 @@ def process_xml_files(base_dir="."):
                     pbar.update(1)
                 
                 # Отмечаем XML файл как обработанный
-                processed_files.add(xml_basename)
+                # processed_files.add(xml_basename)
                 
             except ET.ParseError as e:
                 print(f"\n✗ Ошибка при парсинге XML файла {xml_file}: {str(e)}")
-                processed_files.add(xml_basename)
+                # processed_files.add(xml_basename)
                 continue
             except Exception as e:
                 print(f"\n✗ Неожиданная ошибка при обработке {xml_file}: {str(e)}")
                 import traceback
                 traceback.print_exc()
-                processed_files.add(xml_basename)
+                # processed_files.add(xml_basename)
                 continue
 
 if __name__ == "__main__":
