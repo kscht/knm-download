@@ -7,7 +7,6 @@ import json
 from download_xml_files import create_session, download_file, normalize_filename
 import zipfile
 import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from threading import Lock
 
@@ -330,17 +329,11 @@ def process_xml_files(base_dir=".", force_update=False):
     
     # Создаем общий прогресс-бар
     with tqdm(total=total_files, desc="Общий прогресс", position=0) as pbar:
-        # Скачиваем файлы в параллельном режиме
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            future_to_file = {
-                executor.submit(download_and_check_file, (url, *file_info)): url 
-                for url, file_info in unique_files.items()
-            }
-            
-            for future in as_completed(future_to_file):
-                message, success = future.result()
-                print(f"\n{message}")
-                pbar.update(1)
+        # Скачиваем файлы последовательно
+        for url, (target_path, session, force_update) in unique_files.items():
+            message, success = download_and_check_file((url, target_path, session, force_update))
+            print(f"\n{message}")
+            pbar.update(1)
 
 if __name__ == "__main__":
     process_xml_files(force_update=True)  # По умолчанию включаем принудительное обновление 
