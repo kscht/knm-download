@@ -285,6 +285,7 @@ def process_xml_files(base_dir=".", force_update=False):
     # Собираем все уникальные файлы из XML
     for xml_file in latest_files:
         try:
+            print(f"\nОбработка XML файла: {xml_file}")
             tree = ET.parse(xml_file)
             root = tree.getroot()
             zip_links, xsd_links = extract_links_from_xml(root)
@@ -316,6 +317,7 @@ def process_xml_files(base_dir=".", force_update=False):
                     unique_files[xsd_link] = (xsd_filename, session, force_update)
             
             print(f"В файле {xml_file} найдено {len(zip_links)} ZIP и {len(xsd_links)} XSD файлов")
+            print(f"Текущее количество уникальных файлов: {len(unique_files)}")
         except Exception as e:
             print(f"Ошибка при подсчете файлов в {xml_file}: {str(e)}")
             continue
@@ -330,10 +332,15 @@ def process_xml_files(base_dir=".", force_update=False):
     # Создаем общий прогресс-бар
     with tqdm(total=total_files, desc="Общий прогресс", position=0) as pbar:
         # Скачиваем файлы последовательно
-        for url, (target_path, session, force_update) in unique_files.items():
-            message, success = download_and_check_file((url, target_path, session, force_update))
-            print(f"\n{message}")
-            pbar.update(1)
+        for i, (url, (target_path, session, force_update)) in enumerate(unique_files.items(), 1):
+            try:
+                print(f"\nСкачивание файла {i} из {total_files}: {os.path.basename(url)}")
+                message, success = download_and_check_file((url, target_path, session, force_update))
+                print(f"{message}")
+                pbar.update(1)
+            except Exception as e:
+                print(f"Ошибка при скачивании {url}: {str(e)}")
+                continue
 
 if __name__ == "__main__":
     process_xml_files(force_update=True)  # По умолчанию включаем принудительное обновление 
