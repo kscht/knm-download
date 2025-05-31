@@ -196,7 +196,7 @@ def mark_file_downloading(url, is_downloading=True):
         else:
             downloading_files.pop(url, None)
 
-def download_with_rate_limit(url, target_path, session, chunk_size=8192, rate_limit=10*1024*1024):  # 10MB/s
+def download_with_rate_limit(url, target_path, session, chunk_size=8192, rate_limit=10*1024*1024):
     """Скачивает файл с ограничением скорости"""
     try:
         # Проверяем, не скачивается ли уже этот файл
@@ -207,7 +207,16 @@ def download_with_rate_limit(url, target_path, session, chunk_size=8192, rate_li
         # Отмечаем файл как скачиваемый
         mark_file_downloading(url, True)
 
-        response = session.get(url, stream=True)
+        # Добавляем базовые заголовки браузера
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive'
+        }
+
+        response = session.get(url, stream=True, headers=headers)
         response.raise_for_status()
         
         total_size = int(response.headers.get('content-length', 0))
@@ -252,6 +261,14 @@ def download_and_check_file(file_info):
     else:
         return f"✗ Ошибка при скачивании файла: {basename}", False
 
+def extract_date_from_filename(filename):
+    """Извлекает дату из имени файла в формате YYYYMMDD"""
+    # Ищем дату в формате YYYYMMDD
+    match = re.search(r'data-(\d{8})', filename)
+    if match:
+        return match.group(1)
+    return None
+
 def process_xml_files(base_dir=".", force_update=False):
     """Обрабатывает XML файлы и скачивает связанные файлы
     
@@ -280,7 +297,7 @@ def process_xml_files(base_dir=".", force_update=False):
     print(f"\nНайдено {len(latest_files)} XML файлов для обработки")
     
     # Словарь для хранения уникальных файлов и их путей
-    unique_files = {}  # {url: (target_path, session, force_update)}
+    unique_files = {}  # {url: (target_path, session, force_update, date)}
     
     # Собираем все уникальные файлы из XML
     for xml_file in latest_files:
@@ -307,14 +324,16 @@ def process_xml_files(base_dir=".", force_update=False):
                 if zip_link not in unique_files:
                     zip_basename = os.path.basename(zip_link)
                     zip_filename = os.path.join(full_target_dir, zip_basename)
-                    unique_files[zip_link] = (zip_filename, session, force_update)
+                    date = extract_date_from_filename(zip_basename)
+                    unique_files[zip_link] = (zip_filename, session, force_update, date)
             
             # Добавляем XSD файлы
             for xsd_link in xsd_links:
                 if xsd_link not in unique_files:
                     xsd_basename = os.path.basename(xsd_link)
                     xsd_filename = os.path.join(xsd_base_dir, xsd_basename)
-                    unique_files[xsd_link] = (xsd_filename, session, force_update)
+                    date = extract_date_from_filename(xsd_basename)
+                    unique_files[xsd_link] = (xsd_filename, session, force_update, date)
             
             print(f"В файле {xml_file} найдено {len(zip_links)} ZIP и {len(xsd_links)} XSD файлов")
             print(f"Текущее количество уникальных файлов: {len(unique_files)}")
@@ -329,12 +348,22 @@ def process_xml_files(base_dir=".", force_update=False):
         print("Нет файлов для скачивания")
         return
     
+    # Сортируем файлы по дате в порядке убывания
+    sorted_files = sorted(
+        unique_files.items(),
+        key=lambda x: x[1][3] if x[1][3] else '00000000',  # Если дата не найдена, ставим в конец
+        reverse=True
+    )
+    
     # Создаем общий прогресс-бар
     with tqdm(total=total_files, desc="Общий прогресс", position=0) as pbar:
         # Скачиваем файлы последовательно
-        for i, (url, (target_path, session, force_update)) in enumerate(unique_files.items(), 1):
+        for i, (url, (target_path, session, force_update, date)) in enumerate(sorted_files, 1):
             try:
                 print(f"\nСкачивание файла {i} из {total_files}: {os.path.basename(url)}")
+                print(f"URL: {url}")
+                print(f"Сохраняем в: {target_path}")
+                print(f"Дата файла: {date}")
                 message, success = download_and_check_file((url, target_path, session, force_update))
                 print(f"{message}")
                 pbar.update(1)
