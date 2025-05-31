@@ -164,25 +164,44 @@ def extract_links_from_xml(xml_root):
 def check_file_integrity(file_path):
     """Проверяет целостность файла"""
     if not os.path.exists(file_path):
+        print(f"Файл не существует: {file_path}")
         return False
         
     # Для ZIP файлов проверяем целостность архива
     if file_path.endswith('.zip'):
         try:
+            print(f"\nПроверка целостности ZIP файла: {os.path.basename(file_path)}")
             with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                # Получаем список файлов в архиве
+                file_list = zip_ref.namelist()
+                print(f"Файлов в архиве: {len(file_list)}")
+                
                 # Проверяем целостность всех файлов в архиве
-                return zip_ref.testzip() is None
+                bad_file = zip_ref.testzip()
+                if bad_file is None:
+                    print("✓ ZIP файл цел")
+                    return True
+                else:
+                    print(f"✗ Обнаружен поврежденный файл в архиве: {bad_file}")
+                    return False
         except zipfile.BadZipFile:
+            print("✗ ZIP файл поврежден или имеет неверный формат")
             return False
         except Exception as e:
-            print(f"Ошибка при проверке ZIP файла {file_path}: {str(e)}")
+            print(f"✗ Ошибка при проверке ZIP файла: {str(e)}")
             return False
     
     # Для остальных файлов проверяем, что файл не пустой
     try:
-        return os.path.getsize(file_path) > 0
+        size = os.path.getsize(file_path)
+        if size > 0:
+            print(f"✓ Файл существует и не пуст (размер: {size} байт)")
+            return True
+        else:
+            print("✗ Файл пуст")
+            return False
     except Exception as e:
-        print(f"Ошибка при проверке файла {file_path}: {str(e)}")
+        print(f"✗ Ошибка при проверке файла: {str(e)}")
         return False
 
 def get_file_size(url, session):
@@ -267,13 +286,22 @@ def download_and_check_file(file_info):
     basename = os.path.basename(url)
     
     # Проверяем существование и целостность файла, если не требуется принудительное обновление
-    if not force_update and os.path.exists(target_path) and check_file_integrity(target_path):
-        return f"Пропущен файл (уже скачан и цел): {basename}", True
+    if not force_update and os.path.exists(target_path):
+        print(f"\nПроверка существующего файла: {basename}")
+        if check_file_integrity(target_path):
+            return f"Пропущен файл (уже скачан и цел): {basename}", True
+        else:
+            print(f"Файл поврежден, будет перескачан: {basename}")
     
     # Скачиваем файл с ограничением скорости
     result = download_with_rate_limit(url, target_path, session)
     if result:
-        return f"✓ Файл успешно скачан: {basename}", True
+        # Проверяем целостность скачанного файла
+        print(f"\nПроверка скачанного файла: {basename}")
+        if check_file_integrity(target_path):
+            return f"✓ Файл успешно скачан и проверен: {basename}", True
+        else:
+            return f"✗ Файл скачан, но проверка целостности не пройдена: {basename}", False
     else:
         return f"✗ Ошибка при скачивании файла: {basename}", False
 
