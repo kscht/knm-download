@@ -20,9 +20,9 @@ def get_current_year_month():
     return now.year, now.month
 
 def find_latest_xml_files(base_dir):
-    """Находит все XML файлы в директориях 248/data и no248/data"""
+    """Находит все XML файлы в директориях 248/data и no248/data и сортирует их по дате"""
     print("\nИщем все XML файлы")
-    latest_files = []  # Список для хранения путей к файлам
+    xml_files = []  # Список для хранения путей к файлам и их дат
     
     # Проверяем обе директории
     for subdir in ['248', 'no248']:
@@ -34,22 +34,28 @@ def find_latest_xml_files(base_dir):
             continue
         
         # Выводим все XML файлы в директории
-        xml_files = [f for f in os.listdir(dir_path) if f.endswith('.xml')]
-        print(f"Найдено XML файлов в {subdir}/data: {len(xml_files)}")
-        for file in xml_files:
-            print(f"  - {file}")
+        files = [f for f in os.listdir(dir_path) if f.endswith('.xml')]
+        print(f"Найдено XML файлов в {subdir}/data: {len(files)}")
+        
+        # Добавляем файлы с их датами
+        for file in files:
             full_path = os.path.join(dir_path, file)
-            print(f"Полный путь: {full_path}")
-            latest_files.append(full_path)
+            date = extract_date_from_xml_filename(file)
+            xml_files.append((full_path, date))
+            print(f"  - {file} (дата: {date})")
     
-    if not latest_files:
+    if not xml_files:
         print("\nНе найдено XML файлов")
-    else:
-        print(f"\nНайдено {len(latest_files)} файлов:")
-        for file in latest_files:
-            print(f"  - {file}")
+        return []
     
-    return latest_files
+    # Сортируем файлы по дате в порядке убывания
+    sorted_files = sorted(xml_files, key=lambda x: x[1] if x[1] else '000000', reverse=True)
+    
+    print(f"\nНайдено {len(sorted_files)} файлов, отсортированных по дате:")
+    for file, date in sorted_files:
+        print(f"  - {os.path.basename(file)} (дата: {date})")
+    
+    return [file for file, _ in sorted_files]
 
 def get_target_directory(filename, source_dir):
     """Определяет целевую директорию на основе имени файла и исходной директории"""
@@ -269,6 +275,16 @@ def extract_date_from_filename(filename):
         return match.group(1)
     return None
 
+def extract_date_from_xml_filename(filename):
+    """Извлекает дату из имени XML файла в формате YYYY-MM"""
+    # Ищем дату в формате inspection-YYYY-M
+    match = re.search(r'inspection-(\d{4})-(\d{1,2})', filename)
+    if match:
+        year = match.group(1)
+        month = match.group(2).zfill(2)  # Добавляем ведущий ноль для месяцев < 10
+        return f"{year}{month}"
+    return None
+
 def process_xml_files(base_dir=".", force_update=False):
     """Обрабатывает XML файлы и скачивает связанные файлы
     
@@ -288,7 +304,7 @@ def process_xml_files(base_dir=".", force_update=False):
     if force_update:
         print("Режим принудительного обновления: все файлы будут перескачаны")
     
-    # Находим XML файлы
+    # Находим XML файлы (уже отсортированные по дате)
     latest_files = find_latest_xml_files(base_dir)
     if not latest_files:
         print("Не найдены XML файлы")
@@ -296,10 +312,10 @@ def process_xml_files(base_dir=".", force_update=False):
     
     print(f"\nНайдено {len(latest_files)} XML файлов для обработки")
     
-    # Словарь для хранения уникальных файлов и их путей
-    unique_files = {}  # {url: (target_path, session, force_update, date)}
+    # Счетчик общего количества файлов
+    total_files_processed = 0
     
-    # Собираем все уникальные файлы из XML
+    # Обрабатываем каждый XML файл последовательно
     for xml_file in latest_files:
         try:
             print(f"\nОбработка XML файла: {xml_file}")
@@ -319,57 +335,54 @@ def process_xml_files(base_dir=".", force_update=False):
             os.makedirs(full_target_dir, exist_ok=True)
             os.makedirs(xsd_base_dir, exist_ok=True)
             
+            # Собираем все файлы из текущего XML
+            files_to_download = []
+            
             # Добавляем ZIP файлы
             for zip_link in zip_links:
-                if zip_link not in unique_files:
-                    zip_basename = os.path.basename(zip_link)
-                    zip_filename = os.path.join(full_target_dir, zip_basename)
-                    date = extract_date_from_filename(zip_basename)
-                    unique_files[zip_link] = (zip_filename, session, force_update, date)
+                zip_basename = os.path.basename(zip_link)
+                zip_filename = os.path.join(full_target_dir, zip_basename)
+                date = extract_date_from_filename(zip_basename)
+                files_to_download.append((zip_link, zip_filename, date))
             
             # Добавляем XSD файлы
             for xsd_link in xsd_links:
-                if xsd_link not in unique_files:
-                    xsd_basename = os.path.basename(xsd_link)
-                    xsd_filename = os.path.join(xsd_base_dir, xsd_basename)
-                    date = extract_date_from_filename(xsd_basename)
-                    unique_files[xsd_link] = (xsd_filename, session, force_update, date)
+                xsd_basename = os.path.basename(xsd_link)
+                xsd_filename = os.path.join(xsd_base_dir, xsd_basename)
+                date = extract_date_from_filename(xsd_basename)
+                files_to_download.append((xsd_link, xsd_filename, date))
             
-            print(f"В файле {xml_file} найдено {len(zip_links)} ZIP и {len(xsd_links)} XSD файлов")
-            print(f"Текущее количество уникальных файлов: {len(unique_files)}")
+            # Сортируем файлы по дате в порядке убывания
+            files_to_download.sort(key=lambda x: x[2] if x[2] else '00000000', reverse=True)
+            
+            total_files = len(files_to_download)
+            print(f"\nВ файле {xml_basename} найдено {len(zip_links)} ZIP и {len(xsd_links)} XSD файлов")
+            print(f"Начинаем скачивание {total_files} файлов")
+            
+            # Скачиваем файлы из текущего XML
+            for i, (url, target_path, date) in enumerate(files_to_download, 1):
+                try:
+                    print(f"\nСкачивание файла {i} из {total_files} в {xml_basename}: {os.path.basename(url)}")
+                    print(f"URL: {url}")
+                    print(f"Сохраняем в: {target_path}")
+                    print(f"Дата файла: {date}")
+                    print(f"Источник: {xml_basename}")
+                    message, success = download_and_check_file((url, target_path, session, force_update))
+                    print(f"{message}")
+                    total_files_processed += 1
+                except Exception as e:
+                    print(f"Ошибка при скачивании {url}: {str(e)}")
+                    continue
+            
+            print(f"\nЗавершена обработка файла {xml_basename}")
+            print(f"Всего обработано файлов: {total_files_processed}")
+            
         except Exception as e:
-            print(f"Ошибка при подсчете файлов в {xml_file}: {str(e)}")
+            print(f"Ошибка при обработке XML файла {xml_file}: {str(e)}")
             continue
     
-    total_files = len(unique_files)
-    print(f"\nВсего уникальных файлов для скачивания: {total_files}")
-    
-    if total_files == 0:
-        print("Нет файлов для скачивания")
-        return
-    
-    # Сортируем файлы по дате в порядке убывания
-    sorted_files = sorted(
-        unique_files.items(),
-        key=lambda x: x[1][3] if x[1][3] else '00000000',  # Если дата не найдена, ставим в конец
-        reverse=True
-    )
-    
-    # Создаем общий прогресс-бар
-    with tqdm(total=total_files, desc="Общий прогресс", position=0) as pbar:
-        # Скачиваем файлы последовательно
-        for i, (url, (target_path, session, force_update, date)) in enumerate(sorted_files, 1):
-            try:
-                print(f"\nСкачивание файла {i} из {total_files}: {os.path.basename(url)}")
-                print(f"URL: {url}")
-                print(f"Сохраняем в: {target_path}")
-                print(f"Дата файла: {date}")
-                message, success = download_and_check_file((url, target_path, session, force_update))
-                print(f"{message}")
-                pbar.update(1)
-            except Exception as e:
-                print(f"Ошибка при скачивании {url}: {str(e)}")
-                continue
+    print(f"\nЗавершена обработка всех XML файлов")
+    print(f"Всего скачано файлов: {total_files_processed}")
 
 if __name__ == "__main__":
     process_xml_files(force_update=True)  # По умолчанию включаем принудительное обновление 
