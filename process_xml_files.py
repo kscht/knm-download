@@ -9,6 +9,7 @@ import zipfile
 import requests
 import time
 from threading import Lock
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Глобальный словарь для отслеживания скачиваемых файлов
 downloading_files = {}
@@ -323,6 +324,77 @@ def extract_date_from_xml_filename(filename):
         return f"{year}{month}"
     return None
 
+def process_single_xml(xml_file, data_base_dir, xsd_base_dir, force_update=False):
+    """Обрабатывает один XML файл и скачивает связанные файлы"""
+    try:
+        print(f"\nОбработка XML файла: {xml_file}")
+        tree = ET.parse(xml_file)
+        root = tree.getroot()
+        zip_links, xsd_links = extract_links_from_xml(root)
+        
+        # Создаем отдельную сессию для каждого потока
+        session = create_session()
+        session.timeout = 300  # 5 минут таймаут
+        
+        # Определяем целевую директорию
+        xml_basename = os.path.basename(xml_file)
+        target_dir = get_target_directory(xml_basename, xml_file)
+        if not target_dir:
+            print(f"\nПропущен файл {xml_basename}: не удалось определить целевую директорию")
+            return 0
+        
+        # Создаем полный путь к целевой директории
+        full_target_dir = os.path.join(data_base_dir, target_dir)
+        os.makedirs(full_target_dir, exist_ok=True)
+        os.makedirs(xsd_base_dir, exist_ok=True)
+        
+        # Собираем все файлы из текущего XML
+        files_to_download = []
+        
+        # Добавляем ZIP файлы
+        for zip_link in zip_links:
+            zip_basename = os.path.basename(zip_link)
+            zip_filename = os.path.join(full_target_dir, zip_basename)
+            date = extract_date_from_filename(zip_basename)
+            files_to_download.append((zip_link, zip_filename, date))
+        
+        # Добавляем XSD файлы
+        for xsd_link in xsd_links:
+            xsd_basename = os.path.basename(xsd_link)
+            xsd_filename = os.path.join(xsd_base_dir, xsd_basename)
+            date = extract_date_from_filename(xsd_basename)
+            files_to_download.append((xsd_link, xsd_filename, date))
+        
+        # Сортируем файлы по дате в порядке убывания
+        files_to_download.sort(key=lambda x: x[2] if x[2] else '00000000', reverse=True)
+        
+        total_files = len(files_to_download)
+        print(f"\nВ файле {xml_basename} найдено {len(zip_links)} ZIP и {len(xsd_links)} XSD файлов")
+        
+        # Создаем прогресс-бар для файлов текущего XML
+        with tqdm(total=total_files, desc=f"Файлы из {xml_basename}", position=1, leave=False) as file_pbar:
+            # Скачиваем файлы из текущего XML
+            for i, (url, target_path, date) in enumerate(files_to_download, 1):
+                try:
+                    print(f"\nСкачивание файла {i} из {total_files} в {xml_basename}: {os.path.basename(url)}")
+                    print(f"URL: {url}")
+                    print(f"Сохраняем в: {target_path}")
+                    print(f"Дата файла: {date}")
+                    print(f"Источник: {xml_basename}")
+                    message, success = download_and_check_file((url, target_path, session, force_update))
+                    print(f"{message}")
+                    file_pbar.update(1)
+                except Exception as e:
+                    print(f"Ошибка при скачивании {url}: {str(e)}")
+                    continue
+        
+        print(f"\nЗавершена обработка файла {xml_basename}")
+        return total_files
+        
+    except Exception as e:
+        print(f"Ошибка при обработке XML файла {xml_file}: {str(e)}")
+        return 0
+
 def process_xml_files(base_dir=".", force_update=False):
     """Обрабатывает XML файлы и скачивает связанные файлы
     
@@ -330,10 +402,6 @@ def process_xml_files(base_dir=".", force_update=False):
         base_dir (str): Базовая директория для скачивания файлов
         force_update (bool): Если True, то файлы будут перескачаны даже если они уже существуют
     """
-    # Создаем сессию с увеличенным таймаутом
-    session = create_session()
-    session.timeout = 300  # 5 минут таймаут
-    
     # Создаем базовые директории для данных
     data_base_dir = os.path.join(base_dir, "data")
     xsd_base_dir = os.path.join(base_dir, "xsd")
@@ -350,81 +418,27 @@ def process_xml_files(base_dir=".", force_update=False):
     
     print(f"\nНайдено {len(latest_files)} XML файлов для обработки")
     
-    # Счетчик общего количества файлов
-    total_files_processed = 0
-    
     # Создаем прогресс-бар для XML файлов
     with tqdm(total=len(latest_files), desc="Обработка XML файлов", position=0) as xml_pbar:
-        # Обрабатываем каждый XML файл последовательно
-        for xml_file in latest_files:
-            try:
-                print(f"\nОбработка XML файла: {xml_file}")
-                tree = ET.parse(xml_file)
-                root = tree.getroot()
-                zip_links, xsd_links = extract_links_from_xml(root)
-                
-                # Определяем целевую директорию
-                xml_basename = os.path.basename(xml_file)
-                target_dir = get_target_directory(xml_basename, xml_file)
-                if not target_dir:
-                    print(f"\nПропущен файл {xml_basename}: не удалось определить целевую директорию")
+        # Обрабатываем XML файлы в трех потоках
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            # Создаем список задач
+            future_to_xml = {
+                executor.submit(process_single_xml, xml_file, data_base_dir, xsd_base_dir, force_update): xml_file 
+                for xml_file in latest_files
+            }
+            
+            # Обрабатываем результаты по мере их завершения
+            total_files_processed = 0
+            for future in as_completed(future_to_xml):
+                xml_file = future_to_xml[future]
+                try:
+                    files_processed = future.result()
+                    total_files_processed += files_processed
                     xml_pbar.update(1)
-                    continue
-                
-                # Создаем полный путь к целевой директории
-                full_target_dir = os.path.join(data_base_dir, target_dir)
-                os.makedirs(full_target_dir, exist_ok=True)
-                os.makedirs(xsd_base_dir, exist_ok=True)
-                
-                # Собираем все файлы из текущего XML
-                files_to_download = []
-                
-                # Добавляем ZIP файлы
-                for zip_link in zip_links:
-                    zip_basename = os.path.basename(zip_link)
-                    zip_filename = os.path.join(full_target_dir, zip_basename)
-                    date = extract_date_from_filename(zip_basename)
-                    files_to_download.append((zip_link, zip_filename, date))
-                
-                # Добавляем XSD файлы
-                for xsd_link in xsd_links:
-                    xsd_basename = os.path.basename(xsd_link)
-                    xsd_filename = os.path.join(xsd_base_dir, xsd_basename)
-                    date = extract_date_from_filename(xsd_basename)
-                    files_to_download.append((xsd_link, xsd_filename, date))
-                
-                # Сортируем файлы по дате в порядке убывания
-                files_to_download.sort(key=lambda x: x[2] if x[2] else '00000000', reverse=True)
-                
-                total_files = len(files_to_download)
-                print(f"\nВ файле {xml_basename} найдено {len(zip_links)} ZIP и {len(xsd_links)} XSD файлов")
-                
-                # Создаем прогресс-бар для файлов текущего XML
-                with tqdm(total=total_files, desc=f"Файлы из {xml_basename}", position=1, leave=False) as file_pbar:
-                    # Скачиваем файлы из текущего XML
-                    for i, (url, target_path, date) in enumerate(files_to_download, 1):
-                        try:
-                            print(f"\nСкачивание файла {i} из {total_files} в {xml_basename}: {os.path.basename(url)}")
-                            print(f"URL: {url}")
-                            print(f"Сохраняем в: {target_path}")
-                            print(f"Дата файла: {date}")
-                            print(f"Источник: {xml_basename}")
-                            message, success = download_and_check_file((url, target_path, session, force_update))
-                            print(f"{message}")
-                            total_files_processed += 1
-                            file_pbar.update(1)
-                        except Exception as e:
-                            print(f"Ошибка при скачивании {url}: {str(e)}")
-                            continue
-                
-                print(f"\nЗавершена обработка файла {xml_basename}")
-                print(f"Всего обработано файлов: {total_files_processed}")
-                xml_pbar.update(1)
-                
-            except Exception as e:
-                print(f"Ошибка при обработке XML файла {xml_file}: {str(e)}")
-                xml_pbar.update(1)
-                continue
+                except Exception as e:
+                    print(f"Ошибка при обработке {xml_file}: {str(e)}")
+                    xml_pbar.update(1)
     
     print(f"\nЗавершена обработка всех XML файлов")
     print(f"Всего скачано файлов: {total_files_processed}")
