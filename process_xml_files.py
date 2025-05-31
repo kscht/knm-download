@@ -72,13 +72,19 @@ def get_target_directory(filename, source_dir):
     print(f"Исходная директория: {source_dir}")
     print(f"Поддиректория: {subdir}")
     
+    # Определяем тип файла (inspections или plan)
+    file_type = 'inspections'  # по умолчанию
+    if 'plan' in filename.lower():
+        file_type = 'plan'
+    
     # Ищем год и месяц в имени файла (формат: 7710146102-inspection-2021-7.xml)
     year_match = re.search(r'inspection-(\d{4})-(\d{1,2})', filename)
     if year_match:
         year = year_match.group(1)
         month = year_match.group(2).zfill(2)  # Добавляем ведущий ноль для месяцев < 10
-        target_dir = os.path.join(subdir, f"{year}-{month}")
+        target_dir = os.path.join(subdir, file_type, f"{year}-{month}")
         print(f"Найден год и месяц: {year}-{month}")
+        print(f"Тип файла: {file_type}")
         print(f"Целевая директория: {target_dir}")
         return target_dir
     
