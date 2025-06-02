@@ -26,7 +26,7 @@ def format_size(size_bytes):
 
 def main():
     # Путь к директории с XML файлами
-    xml_dir = "xml"
+    xml_dir = "data"
     
     # Счетчики
     total_archives = 0
@@ -79,7 +79,10 @@ def main():
     print(f"Всего архивов: {total_archives}")
     print(f"Общий размер архивов: {format_size(total_size)}")
     print(f"Суммарный размер файлов в архивах: {format_size(total_uncompressed_size)}")
-    print(f"Средний коэффициент сжатия: {total_uncompressed_size/total_size:.2f}x")
+    if total_size > 0:
+        print(f"Средний коэффициент сжатия: {total_uncompressed_size/total_size:.2f}x")
+    else:
+        print("Средний коэффициент сжатия: N/A (нет архивов)")
     
     # Выводим статистику по директориям
     print("\n" + "="*80)
@@ -93,6 +96,8 @@ def main():
         print(f"Суммарный размер файлов в архивах: {format_size(stats['uncompressed_size'])}")
         if stats['size'] > 0:
             print(f"Коэффициент сжатия: {stats['uncompressed_size']/stats['size']:.2f}x")
+        else:
+            print("Коэффициент сжатия: N/A (нет архивов)")
 
 if __name__ == "__main__":
     main() 
